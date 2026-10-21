@@ -36,3 +36,7 @@ staticfiles/
 
 # Pipenv (keep Pipfile + lock; ignore local venv path noise)
 .python-version
+
+# Local pyreverse dumps (prefer docs/erd_student_app.png from graph_models)
+university_mgt_project/classes_university.*
+university_mgt_project/packages_university.*
