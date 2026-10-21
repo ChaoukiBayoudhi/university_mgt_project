@@ -1,0 +1,72 @@
+classDiagram
+  class Course {
+    credits : PositiveSmallIntegerField
+    description : TextField
+    durationByWeek : DurationField
+    endDate : DateTimeField
+    startDate : DateTimeField
+    teacher : ForeignKey
+    title : CharField
+    type : CharField
+  }
+  class Grade {
+    coefficient : FloatField
+    course : ForeignKey
+    gradeName : CharField
+    justification : TextField
+    mark : DecimalField
+    pk : CompositePrimaryKey
+    student : ForeignKey
+  }
+  class Inscription {
+    course : ForeignKey
+    date : DateField
+    pk : CompositePrimaryKey
+    situation : CharField
+    student : ForeignKey
+  }
+  class Meta {
+    db_table : str
+    ordering : tuple
+  }
+  class Meta {
+    db_table : str
+  }
+  class Meta {
+    db_table : str
+  }
+  class Meta {
+    db_table : str
+    unique_together : tuple
+  }
+  class Meta {
+    db_table : str
+  }
+  class Meta {
+    db_table : str
+  }
+  class Profile {
+    github : URLField
+    linkedin : URLField
+    portfolio : URLField
+    student : OneToOneField
+    teacher : OneToOneField
+    website : URLField
+  }
+  class Student {
+    bio : TextField
+    birthday : DateField
+    cin : CharField
+    email : EmailField
+    familyName : CharField
+    inscriptionNumber : PositiveBigIntegerField
+    name : CharField
+    photo : ImageField
+  }
+  class Teacher {
+    bio : TextField
+    email : EmailField
+    familyName : CharField
+    name : CharField
+    photo : ImageField
+  }
