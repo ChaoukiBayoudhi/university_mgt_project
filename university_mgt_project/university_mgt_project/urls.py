@@ -16,9 +16,8 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path,include
-from university_mgt_project import student_app
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('/',include('student_app.urls')),
+    path('api/',include('student_app.urls')),
 ]

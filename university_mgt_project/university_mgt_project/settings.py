@@ -37,7 +37,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'django_extensions', # to use pydot to generate the graph of the models
+    #'django_extensions', # to use pydot to generate the graph of the models
     'student_app',
     'rest_framework', #DRF
 ]
