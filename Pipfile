@@ -9,6 +9,7 @@ pillow = "*"
 pylint = "*"
 django-extensions = "*"
 pydot = "*"
+djangorestframework = "*"
 
 [dev-packages]
 
