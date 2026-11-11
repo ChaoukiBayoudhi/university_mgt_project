@@ -209,41 +209,49 @@ class StudentViewSet(viewsets.ModelViewSet):
     def transcript(self, request, pk=None):
         """Build a mini transcript: grades + weighted average per course."""
         student = self.get_object()
-        # Evaluate once with select_related (avoids N+1 on grade.course)
-        grades = list(
-            student.grades.select_related("course").order_by(
-                "course__code", "gradeName"
+        # One SQL query with JOIN: .values() returns plain dicts (no lazy FK loads).
+        # coefficient/mark are local Grade columns — not related objects.
+        grade_rows = list(
+            student.grades.order_by("course__code", "gradeName").values(
+                "course_id",
+                "course__code",
+                "course__title",
+                "gradeName",
+                "mark",
+                "maxMark",
+                "coefficient",
             )
         )
-        # or (may cause N+1 queries):
-        # grades = list(student.grades.all().order_by("course__code", "gradeName"))
-        # or:
-        # grades = list(
-        #     Grade.objects.filter(student=student).select_related("course")
+        # or (model instances + select_related — also one query, but linters
+        #     sometimes false-flag attribute access in the loop as N+1):
+        # grade_rows = list(
+        #     student.grades.select_related("course").order_by(
+        #         "course__code", "gradeName"
+        #     )
         # )
 
-        # Plain Python dict — not a QuerySet (.values() here is dict.values)
         by_course: dict[int, dict] = {}
-        for grade in grades:
+        for row in grade_rows:
+            course_id = row["course_id"]
             bucket = by_course.setdefault(
-                grade.course.pk,
+                course_id,
                 {
-                    "courseCode": grade.course.code,
-                    "courseTitle": grade.course.title,
+                    "courseCode": row["course__code"],
+                    "courseTitle": row["course__title"],
                     "items": [],
                     "_weighted": Decimal(0),
                     "_coeff": Decimal(0),
                 },
             )
             # Decimal(str(...)) avoids float binary rounding
-            coeff = Decimal(str(grade.coefficient))
-            mark = Decimal(str(grade.mark))
+            coeff = Decimal(str(row["coefficient"]))
+            mark = Decimal(str(row["mark"]))
             bucket["items"].append(
                 {
-                    "gradeName": grade.gradeName,
-                    "mark": str(grade.mark),
-                    "maxMark": str(grade.maxMark),
-                    "coefficient": grade.coefficient,
+                    "gradeName": row["gradeName"],
+                    "mark": str(row["mark"]),
+                    "maxMark": str(row["maxMark"]),
+                    "coefficient": row["coefficient"],
                 }
             )
             bucket["_weighted"] += mark * coeff
@@ -272,7 +280,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             {
                 "student": StudentSerializer(student).data,
                 "courses": courses,
-                "gradeCount": len(grades),
+                "gradeCount": len(grade_rows),
             }
         )
 
