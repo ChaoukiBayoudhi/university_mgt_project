@@ -12,6 +12,8 @@ pydot = "*"
 djangorestframework = "*"
 
 [dev-packages]
+django-stubs = {extras = ["compatible"], version = "*"}
+djangorestframework-stubs = "*"
 
 [requires]
 python_version = "3.14"

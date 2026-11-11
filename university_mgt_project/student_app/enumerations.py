@@ -25,3 +25,32 @@ class GradeName(models.TextChoices):
     QUIZ = "quiz", "Quiz"
     CAN = "can", "Continuous assessment"
     OTHER = "other", "Other"
+
+
+class Gender(models.TextChoices):
+    FEMALE = "F", "Female"
+    MALE = "M", "Male"
+    OTHER = "O", "Other"
+    UNSPECIFIED = "U", "Prefer not to say"
+
+
+class AcademicLevel(models.TextChoices):
+    L1 = "L1", "Licence 1"
+    L2 = "L2", "Licence 2"
+    L3 = "L3", "Licence 3"
+    M1 = "M1", "Master 1"
+    M2 = "M2", "Master 2"
+
+
+class Semester(models.TextChoices):
+    S1 = "S1", "Semester 1"
+    S2 = "S2", "Semester 2"
+    SUMMER = "SU", "Summer"
+
+
+class TeacherRank(models.TextChoices):
+    ASSISTANT = "assistant", "Assistant"
+    LECTURER = "lecturer", "Lecturer"
+    ASSOCIATE = "associate", "Associate Professor"
+    PROFESSOR = "professor", "Professor"
+    CONTRACT = "contract", "Contract Teacher"

@@ -1,0 +1,8 @@
+{
+  "include": ["university_mgt_project"],
+  "extraPaths": ["university_mgt_project"],
+  "venvPath": "/Users/chaoukibayoudhi/.local/share/virtualenvs",
+  "venv": "university_mgt_project-3s8XpVQ_",
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "basic"
+}
