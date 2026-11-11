@@ -209,21 +209,24 @@ class StudentViewSet(viewsets.ModelViewSet):
     def transcript(self, request, pk=None):
         """Build a mini transcript: grades + weighted average per course."""
         student = self.get_object()
-        # select_related avoids N+1 queries on grade.course
-        grades = (
-            student.grades.select_related("course")
-            .all()
-            .order_by("course__code", "gradeName")
+        # Evaluate once with select_related (avoids N+1 on grade.course)
+        grades = list(
+            student.grades.select_related("course").order_by(
+                "course__code", "gradeName"
+            )
         )
         # or (may cause N+1 queries):
-        # grades = student.grades.all().order_by("course__code", "gradeName")
+        # grades = list(student.grades.all().order_by("course__code", "gradeName"))
         # or:
-        # grades = Grade.objects.filter(student=student).select_related("course")
+        # grades = list(
+        #     Grade.objects.filter(student=student).select_related("course")
+        # )
 
-        by_course = {}
+        # Plain Python dict — not a QuerySet (.values() here is dict.values)
+        by_course: dict[int, dict] = {}
         for grade in grades:
             bucket = by_course.setdefault(
-                grade.course_id,
+                grade.course.pk,
                 {
                     "courseCode": grade.course.code,
                     "courseTitle": grade.course.title,
@@ -246,23 +249,30 @@ class StudentViewSet(viewsets.ModelViewSet):
             bucket["_weighted"] += mark * coeff
             bucket["_coeff"] += coeff
 
+        # Build response rows from the in-memory dict (no extra DB hits)
         courses = []
-        for data in by_course.values():
-            coeff_sum = data.pop("_coeff")
-            weighted = data.pop("_weighted")
+        for bucket in by_course.values():
+            coeff_sum = bucket["_coeff"]
+            weighted = bucket["_weighted"]
             average = None
             if coeff_sum > 0:
                 average = (weighted / coeff_sum).quantize(
                     Decimal("0.01"), rounding=ROUND_HALF_UP
                 )
-            data["weightedAverage"] = str(average) if average is not None else None
-            courses.append(data)
+            courses.append(
+                {
+                    "courseCode": bucket["courseCode"],
+                    "courseTitle": bucket["courseTitle"],
+                    "items": bucket["items"],
+                    "weightedAverage": (str(average) if average is not None else None),
+                }
+            )
 
         return Response(
             {
                 "student": StudentSerializer(student).data,
                 "courses": courses,
-                "gradeCount": grades.count(),
+                "gradeCount": len(grades),
             }
         )
 
@@ -565,14 +575,20 @@ class GradeViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        grades = Grade.objects.filter(course_id=course_id).select_related("student")
-        totals = {}
+        # One query + join (not N+1); then aggregate in memory with a plain dict
+        grades = list(
+            Grade.objects.filter(course_id=course_id).select_related("student")
+        )
+        # totals is a Python dict, not a QuerySet
+        totals: dict[int, dict] = {}
         for grade in grades:
-            key = grade.student_id
+            # Use related PK (typed); grade.student_id exists at runtime but
+            # stubs often miss *_id on models with CompositePrimaryKey.
+            student_pk = grade.student.pk
             entry = totals.setdefault(
-                key,
+                student_pk,
                 {
-                    "inscriptionNumber": grade.student_id,
+                    "inscriptionNumber": student_pk,
                     "studentName": str(grade.student),
                     "_w": Decimal(0),
                     "_c": Decimal(0),
@@ -583,14 +599,23 @@ class GradeViewSet(viewsets.ModelViewSet):
 
         results = []
         for entry in totals.values():
-            c = entry.pop("_c")
-            w = entry.pop("_w")
-            entry["weightedAverage"] = (
-                str((w / c).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
-                if c > 0
-                else None
+            coeff_sum = entry["_c"]
+            weighted = entry["_w"]
+            results.append(
+                {
+                    "inscriptionNumber": entry["inscriptionNumber"],
+                    "studentName": entry["studentName"],
+                    "weightedAverage": (
+                        str(
+                            (weighted / coeff_sum).quantize(
+                                Decimal("0.01"), rounding=ROUND_HALF_UP
+                            )
+                        )
+                        if coeff_sum > 0
+                        else None
+                    ),
+                }
             )
-            results.append(entry)
 
         return Response({"courseId": int(course_id), "students": results})
 
@@ -724,6 +749,8 @@ class InscriptionViewSet(viewsets.ModelViewSet):
     def bulk_accept(self, request):
         """Accept many pending inscriptions; return successes + per-item errors."""
         items = request.data.get("items")
+        # or (raises KeyError if "items" is missing — skips the friendly 400 below):
+        # items = request.data["items"]
         if not isinstance(items, list) or not items:
             return Response(
                 {"detail": "Body must include a non-empty 'items' list."},
