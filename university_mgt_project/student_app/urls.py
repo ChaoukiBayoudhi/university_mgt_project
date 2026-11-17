@@ -11,6 +11,10 @@ Students
   MEDIUM   GET  /api/students/by-level/?level=L1
   MEDIUM   POST /api/students/{inscriptionNumber}/deactivate/
   ADVANCED GET  /api/students/{inscriptionNumber}/transcript/
+  ADVANCED GET  /api/students/by-level-stats/?min=2          (GROUP BY + HAVING)
+  ADVANCED GET  /api/students/with-avg-mark/?min_avg=10      (Subquery + annotate)
+  ADVANCED GET  /api/students/demo-aggregate/               (aggregate = 1 summary)
+  ADVANCED GET  /api/students/demo-annotate/                (annotate = per-row column)
 
 Teachers
   EASY     GET  /api/teachers/active/
@@ -22,11 +26,18 @@ Courses
   MEDIUM   GET  /api/courses/{id}/enrolled-students/
   ADVANCED POST /api/courses/{id}/enroll/
   ADVANCED GET  /api/courses/{id}/stats/
+  ADVANCED GET  /api/courses/with-enrollment/                (annotate)
+  ADVANCED GET  /api/courses/popular/?min=10                 (annotate + HAVING)
+  ADVANCED POST /api/courses/bump-capacity/                  (F() update)
 
 Grades
   EASY     GET  /api/grades/high-scores/
   MEDIUM   GET  /api/grades/by-course/?course_id=1
   ADVANCED GET  /api/grades/course-average/?course_id=1
+  ADVANCED GET  /api/grades/near-max/?ratio=0.8              (F() filter)
+  ADVANCED GET  /api/grades/statistics/?course_id=1          (aggregates)
+  ADVANCED POST /api/grades/bulk-create/                     (bulk_create)
+  ADVANCED POST /api/grades/bulk-update/                     (bulk_update)
 
 Profiles
   EASY     GET  /api/profiles/with-github/

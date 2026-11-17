@@ -39,14 +39,14 @@ url_name="..."
     Full name = "{basename}-{url_name}" (basename comes from router.register).
 """
 
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
-from django.db.models import Avg, Count, Q, Sum
+from django.db.models import Avg, Count, F, Max, Min, OuterRef, Q, Subquery, Sum
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .enumerations import AcademicLevel, CourseType, InscriptionStatus
+from .enumerations import AcademicLevel, CourseType, GradeName, InscriptionStatus
 from .models import Course, Grade, Inscription, Profile, Student, Teacher
 from .serializers import (
     CourseSerializer,
@@ -56,6 +56,214 @@ from .serializers import (
     StudentSerializer,
     TeacherSerializer,
 )
+
+# =============================================================================
+# STUDENT EXERCISES — implement the 3 functions below (do not change signatures)
+# =============================================================================
+#
+# How to work
+# -----------
+# 1. Read the docstring of each function carefully (goal, inputs, expected output).
+# 2. Replace `raise NotImplementedError(...)` with real Django ORM / Python code.
+# 3. Test in the Django shell or by calling the function from a temporary @action.
+# 4. Compare your result shape with the "Example output" block in each docstring.
+#
+# General recommendations
+# -----------------------
+# - Prefer the ORM (filter / annotate / aggregate / F / Subquery) over Python loops
+#   when the work can be done in SQL — it scales better.
+# - Use .values() / .values_list() when you only need a few columns (lighter payloads).
+# - Catch narrow exceptions (ValueError, InvalidOperation, …), never bare `except Exception`.
+# - Keep response-friendly types: str for Decimal marks, int for counts, None when empty.
+# - Look at working demos in this file for inspiration:
+#     demo_aggregate / demo_annotate / by_level_stats / with_avg_mark / near_max
+# - Suggested order: exercise 1 → 2 → 3 (increasing difficulty).
+#
+# =============================================================================
+
+
+def students_search_by_name(query: str, *, active_only: bool = True) -> list[dict]:
+    """
+    EXERCISE 1 — EASY  |  filter + Q + icontains
+
+    Goal
+    ----
+    Return students whose *name* OR *familyName* contains ``query``
+    (case-insensitive). Optionally restrict to active students.
+
+    Parameters
+    ----------
+    query : str
+        Search text (e.g. ``"ali"``). Strip whitespace; if empty after strip,
+        return an empty list (do not query the DB).
+    active_only : bool, default True
+        If True, keep only students with ``isActive=True``.
+
+    Expected return
+    ---------------
+    A list of dicts, ordered by familyName then name, each with keys:
+        inscriptionNumber, name, familyName, level, email
+
+    Example output
+    --------------
+    students_search_by_name("ali")
+    → [
+        {
+          "inscriptionNumber": 20260001,
+          "name": "Sara",
+          "familyName": "Ben Ali",
+          "level": "L2",
+          "email": "sara.benali@example.com"
+        }
+      ]
+
+    Recommendations / hints
+    -----------------------
+    - Use ``Q(name__icontains=...) | Q(familyName__icontains=...)``.
+    - Chain ``.filter(isActive=True)`` when ``active_only`` is True.
+    - Finish with ``.values("inscriptionNumber", "name", "familyName", "level", "email")``.
+    - Convert the QuerySet with ``list(...)`` before returning.
+    - Inspiration: ProfileViewSet.search (Q + icontains) in this file.
+    """
+    # TODO: implement (Exercise 1)
+    raise NotImplementedError("Exercise 1: implement students_search_by_name")
+
+
+def course_fill_rates(*, min_rate: float = 0.5) -> list[dict]:
+    """
+    EXERCISE 2 — MEDIUM  |  annotate + F() + filter (HAVING-style)
+
+    Goal
+    ----
+    For each *active* course, compute how full it is:
+
+        fillRate = enrollmentCount / maxStudents
+
+    Keep only courses where ``fillRate >= min_rate`` and ``maxStudents > 0``.
+
+    Parameters
+    ----------
+    min_rate : float, default 0.5
+        Minimum fill ratio in (0, 1] (e.g. 0.5 = at least half full).
+        Validate: if ``min_rate`` is not in (0, 1], raise ``ValueError``.
+
+    Expected return
+    ---------------
+    A list of dicts ordered by fillRate descending, then code ascending.
+    Each dict keys:
+        id, code, title, maxStudents, enrollmentCount, fillRate
+
+    ``fillRate`` should be a float rounded to 2 decimal places
+    (e.g. 0.75 for 30 enrolled / 40 seats).
+
+    Example output
+    --------------
+    course_fill_rates(min_rate=0.5)
+    → [
+        {
+          "id": 3,
+          "code": "PY201",
+          "title": "Python",
+          "maxStudents": 40,
+          "enrollmentCount": 35,
+          "fillRate": 0.88
+        },
+        {
+          "id": 1,
+          "code": "DJ101",
+          "title": "Django Basics",
+          "maxStudents": 40,
+          "enrollmentCount": 28,
+          "fillRate": 0.70
+        }
+      ]
+
+    Recommendations / hints
+    -----------------------
+    - Annotate: ``enrollmentCount=Count("inscriptions")``.
+    - Prefer computing fillRate in Python after ``.values(...)``, OR use
+      ``F("enrollmentCount") * 1.0 / F("maxStudents")`` with ExpressionWrapper
+      (advanced — optional).
+    - Filter ``isActive=True`` and ``maxStudents__gt=0`` before / after annotate.
+    - ``filter(enrollmentCount__gte=...)`` after annotate ≈ SQL HAVING.
+    - Inspiration: CourseViewSet.with_enrollment / popular / bump_capacity (F).
+    """
+    # TODO: implement (Exercise 2)
+    raise NotImplementedError("Exercise 2: implement course_fill_rates")
+
+
+def top_students_by_average(*, min_avg: Decimal = Decimal(14), limit: int = 10) -> dict:
+    """
+    EXERCISE 3 — ADVANCED  |  Subquery / annotate + aggregate summary
+
+    Goal
+    ----
+    Build a small leaderboard of active students whose average mark
+    (Avg of related Grade.mark) is at least ``min_avg``.
+
+    Also return a global summary with ``aggregate()`` so you practice
+    BOTH annotate (per student) and aggregate (one summary dict).
+
+    Parameters
+    ----------
+    min_avg : Decimal, default Decimal("14")
+        Minimum average mark /20. If not a Decimal, convert with Decimal(str(...));
+        on failure raise ``ValueError``.
+    limit : int, default 10
+        Max number of students in the leaderboard (must be >= 1, else ValueError).
+
+    Expected return
+    ---------------
+    A dict with two keys:
+
+    - ``summary`` : from aggregate() on *all* Grade rows (or on grades of active
+      students — document your choice in a short comment). Keys:
+          gradeCount, averageMark, minMark, maxMark
+      (marks as strings with 2 decimals, e.g. ``"12.35"``, or None if no grades)
+
+    - ``leaderboard`` : list of up to ``limit`` dicts, ordered by averageMark
+      descending, then familyName, name. Each item:
+          inscriptionNumber, name (full display str), level, averageMark (str|None)
+
+    Example output
+    --------------
+    top_students_by_average(min_avg=Decimal("14"), limit=2)
+    → {
+        "summary": {
+          "gradeCount": 120,
+          "averageMark": "12.40",
+          "minMark": "4.00",
+          "maxMark": "19.50"
+        },
+        "leaderboard": [
+          {
+            "inscriptionNumber": 20260007,
+            "name": "Gharbi Amine (20260007)",
+            "level": "M1",
+            "averageMark": "16.25"
+          },
+          {
+            "inscriptionNumber": 20260001,
+            "name": "Ben Ali Sara (20260001)",
+            "level": "L2",
+            "averageMark": "14.80"
+          }
+        ]
+      }
+
+    Recommendations / hints
+    -----------------------
+    - Per-student average: either
+        (a) ``annotate(averageMark=Avg("grades__mark"))``, or
+        (b) a correlated ``Subquery`` like ``with_avg_mark`` in this file.
+    - Global stats: ``Grade.objects.aggregate(Count, Avg, Min, Max)``.
+    - Filter ``isActive=True`` and ``averageMark__gte=min_avg`` *after* annotate.
+    - Slice with ``[:limit]``; format Decimals with quantize(Decimal("0.01")).
+    - Remember: aggregate() → one dict; annotate() → one value per row.
+    - Inspiration: demo_aggregate, demo_annotate, with_avg_mark, grades/statistics.
+    """
+    # TODO: implement (Exercise 3)
+    raise NotImplementedError("Exercise 3: implement top_students_by_average")
 
 
 class StudentViewSet(viewsets.ModelViewSet):
@@ -148,9 +356,7 @@ class StudentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         # Validate against TextChoices values (not labels)
-        valid = {choice.value for choice in AcademicLevel}
-        # or:
-        # valid = dict(AcademicLevel.choices).keys()
+        valid = set(AcademicLevel.values)
         if level not in valid:
             return Response(
                 {"detail": f"Invalid level. Choose one of: {sorted(valid)}"},
@@ -284,6 +490,192 @@ class StudentViewSet(viewsets.ModelViewSet):
             }
         )
 
+    # What it does: GROUP BY level + HAVING studentCount >= min (SQL-style).
+    # Path: GET /api/students/by-level-stats/?min=2
+    # SQL equivalent:
+    #   SELECT level, COUNT(*) AS studentCount
+    #   FROM student
+    #   GROUP BY level
+    #   HAVING COUNT(*) >= 2;
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="by-level-stats",
+        url_name="by-level-stats",
+    )
+    def by_level_stats(self, request):
+        """Group students by level; keep groups with count >= min (HAVING)."""
+        try:
+            min_count = int(request.query_params.get("min", 1))
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Query param 'min' must be an integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # values('level') = GROUP BY level
+        # annotate(...) = SELECT aggregates
+        # filter(studentCount__gte=...) after annotate = HAVING
+        rows = list(
+            self.get_queryset()
+            .values("level")
+            .annotate(studentCount=Count("inscriptionNumber"))
+            .filter(studentCount__gte=min_count)
+            .order_by("level")
+        )
+        # Example output look like:
+        # {
+        #   "min": 2,
+        #   "groups": [
+        #     {"level": "L1", "studentCount": 12},
+        #     {"level": "L2", "studentCount": 8},
+        #     {"level": "M1", "studentCount": 3}
+        #   ]
+        # }
+        return Response({"min": min_count, "groups": rows})
+
+    # What it does: annotate each student with avg mark via a correlated Subquery.
+    # Path: GET /api/students/with-avg-mark/?min_avg=10
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="with-avg-mark",
+        url_name="with-avg-mark",
+    )
+    def with_avg_mark(self, request):
+        """List students annotated with average mark (Subquery); optional min filter."""
+        # Correlated subquery: for each outer Student row, compute Avg(mark)
+        # SQL look like:
+        #   SELECT student.*,
+        #     (SELECT AVG(mark) FROM grade
+        #      WHERE grade.student_id = student.inscriptionNumber) AS averageMark
+        #   FROM student;
+        avg_subquery = (
+            Grade.objects.filter(student_id=OuterRef("inscriptionNumber"))
+            .values("student_id")
+            .annotate(avg=Avg("mark"))
+            .values("avg")[:1]
+        )
+        qs = self.get_queryset().annotate(averageMark=Subquery(avg_subquery))
+        # or all in one instruction:
+        # qs = self.get_queryset().annotate(
+        #     averageMark=Subquery(
+        #         Grade.objects.filter(student_id=OuterRef("inscriptionNumber"))
+        #         .values("student_id")
+        #         .annotate(avg=Avg("mark"))
+        #         .values("avg")[:1]
+        #     )
+        # )
+        min_avg = request.query_params.get("min_avg")
+        if min_avg is not None:
+            try:
+                threshold = Decimal(str(min_avg))
+            except (InvalidOperation, TypeError, ValueError):
+                return Response(
+                    {"detail": "Query param 'min_avg' must be a number."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # Filter on the annotated alias (HAVING-like on a subquery column)
+            qs = qs.filter(averageMark__gte=threshold)
+
+        # .values() → plain dicts (annotated averageMark is a column, not a relation;
+        # avoids ORM-lens false N+1 on attribute access inside a loop)
+        rows = []
+        for row in qs.order_by("familyName", "name").values(
+            "inscriptionNumber",
+            "name",
+            "familyName",
+            "level",
+            "averageMark",
+        ):
+            avg = row["averageMark"]
+            rows.append(
+                {
+                    "inscriptionNumber": row["inscriptionNumber"],
+                    "name": f"{row['familyName']} {row['name']} ({row['inscriptionNumber']})",
+                    "level": row["level"],
+                    "averageMark": (
+                        str(
+                            Decimal(str(avg)).quantize(
+                                Decimal("0.01"), rounding=ROUND_HALF_UP
+                            )
+                        )
+                        if avg is not None
+                        else None
+                    ),
+                }
+            )
+        # Example output look like:
+        # {
+        #   "students": [
+        #     {
+        #       "inscriptionNumber": 20260001,
+        #       "name": "Ben Ali Sara (20260001)",
+        #       "level": "L2",
+        #       "averageMark": "14.25"
+        #     }
+        #   ]
+        # }
+        return Response({"students": rows})
+
+    # ------------------------------------------------------------------
+    # DEMO: aggregate() vs annotate() (side-by-side teaching pair)
+    # ------------------------------------------------------------------
+
+    # What it does: ONE summary for the WHOLE queryset (aggregate → single dict).
+    # Path: GET /api/students/demo-aggregate/
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="demo-aggregate",
+        url_name="demo-aggregate",
+    )
+    def demo_aggregate(self, request):
+        """aggregate() collapses all rows into one summary dict."""
+        # SQL look like:
+        #   SELECT COUNT(*), COUNT(*) FILTER (WHERE "isActive")
+        #   FROM student;
+        result = self.get_queryset().aggregate(
+            totalStudents=Count("inscriptionNumber"),
+            activeStudents=Count("inscriptionNumber", filter=Q(isActive=True)),
+        )
+        # Example output look like:
+        # {"totalStudents": 50, "activeStudents": 47}
+        # ← one object, not a list of students
+        return Response(result)
+
+    # What it does: ONE extra column PER student row (annotate → queryset of rows).
+    # Path: GET /api/students/demo-annotate/
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="demo-annotate",
+        url_name="demo-annotate",
+    )
+    def demo_annotate(self, request):
+        """annotate() keeps every row and adds a computed column on each."""
+        # SQL look like:
+        #   SELECT student.inscriptionNumber, ..., COUNT(grade.*) AS gradeCount
+        #   FROM student
+        #   LEFT OUTER JOIN grade ON ...
+        #   GROUP BY student.inscriptionNumber;
+        rows = list(
+            self.get_queryset()
+            .annotate(gradeCount=Count("grades"))
+            .values("inscriptionNumber", "familyName", "name", "level", "gradeCount")
+            .order_by("familyName", "name")
+        )
+        # Example output look like:
+        # {
+        #   "students": [
+        #     {"inscriptionNumber": 20260001, "familyName": "Ben Ali",
+        #      "name": "Sara", "level": "L2", "gradeCount": 3},
+        #     {"inscriptionNumber": 20260002, "familyName": "Trabelsi",
+        #      "name": "Omar", "level": "L1", "gradeCount": 0}
+        #   ]
+        # }
+        # ← still many rows; each row carries its own gradeCount
+        return Response({"students": rows})
+
 
 class TeacherViewSet(viewsets.ModelViewSet):
     queryset = Teacher.objects.all()
@@ -371,7 +763,7 @@ class CourseViewSet(viewsets.ModelViewSet):
                 {"detail": "Query param 'type' is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        valid = {choice.value for choice in CourseType}
+        valid = set(CourseType.values)
         if course_type not in valid:
             return Response(
                 {"detail": f"Invalid type. Choose one of: {sorted(valid)}"},
@@ -510,6 +902,126 @@ class CourseViewSet(viewsets.ModelViewSet):
             }
         )
 
+    # What it does: annotate each course with enrollmentCount (extra SELECT column).
+    # Path: GET /api/courses/with-enrollment/
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="with-enrollment",
+        url_name="with-enrollment",
+    )
+    def with_enrollment(self, request):
+        """List courses annotated with inscription count (annotate = per-row column)."""
+        # annotate adds a computed field to every row of the QuerySet
+        # SQL look like:
+        #   SELECT course.*, COUNT(inscription.student_id) AS enrollmentCount
+        #   FROM course
+        #   LEFT OUTER JOIN inscription ON ...
+        #   GROUP BY course.id;
+        # .values() after annotate → dicts with enrollmentCount as a column
+        rows = []
+        for row in (
+            self.get_queryset()
+            .annotate(enrollmentCount=Count("inscriptions"))
+            .order_by("-enrollmentCount", "code")
+            .values("id", "code", "title", "maxStudents", "enrollmentCount")
+        ):
+            rows.append(
+                {
+                    "id": row["id"],
+                    "code": row["code"],
+                    "title": row["title"],
+                    "maxStudents": row["maxStudents"],
+                    "enrollmentCount": row["enrollmentCount"],
+                    "seatsLeft": max(row["maxStudents"] - row["enrollmentCount"], 0),
+                }
+            )
+        # Example output look like:
+        # {
+        #   "courses": [
+        #     {
+        #       "id": 1,
+        #       "code": "DJ101",
+        #       "title": "Django Basics",
+        #       "maxStudents": 40,
+        #       "enrollmentCount": 28,
+        #       "seatsLeft": 12
+        #     }
+        #   ]
+        # }
+        return Response({"courses": rows})
+
+    # What it does: popular courses — annotate then HAVING-style filter.
+    # Path: GET /api/courses/popular/?min=10
+    # SQL: GROUP BY course HAVING COUNT(inscriptions) >= min
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="popular",
+        url_name="popular",
+    )
+    def popular(self, request):
+        """Courses whose enrollment count is at least min (annotate + filter = HAVING)."""
+        try:
+            min_enrolled = int(request.query_params.get("min", 10))
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Query param 'min' must be an integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        rows = list(
+            self.get_queryset()
+            .annotate(enrollmentCount=Count("inscriptions"))
+            .filter(enrollmentCount__gte=min_enrolled)
+            .order_by("-enrollmentCount")
+            .values("id", "code", "title", "enrollmentCount")
+        )
+        # Example output look like:
+        # {"min": 10, "courses": [{"id": 3, "code": "PY201", "title": "Python", "enrollmentCount": 35}]}
+        return Response({"min": min_enrolled, "courses": rows})
+
+    # What it does: bump maxStudents with F() (SQL-side arithmetic, no race in Python).
+    # Path: POST /api/courses/bump-capacity/
+    # Body JSON: {"extra": 5}  or  {"extra": 5, "course_ids": [1, 2]}
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bump-capacity",
+        url_name="bump-capacity",
+    )
+    def bump_capacity(self, request):
+        """Increase maxStudents with F(): UPDATE course SET maxStudents = maxStudents + extra."""
+        extra = request.data.get("extra", 5)
+        try:
+            extra = int(extra)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Field 'extra' must be an integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if extra == 0:
+            return Response(
+                {"detail": "Field 'extra' must be non-zero."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        qs = self.get_queryset().filter(isActive=True)
+        course_ids = request.data.get("course_ids")
+        if course_ids is not None:
+            if not isinstance(course_ids, list) or not course_ids:
+                return Response(
+                    {"detail": "'course_ids' must be a non-empty list when provided."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            qs = qs.filter(pk__in=course_ids)
+
+        # F('maxStudents') references the CURRENT column value inside SQL
+        # → one atomic UPDATE, no load-modify-save loop, no lost updates
+        updated = qs.update(maxStudents=F("maxStudents") + extra)
+        # Example output look like:
+        # {"updatedCount": 4, "extra": 5}
+        return Response({"updatedCount": updated, "extra": extra})
+
 
 class GradeViewSet(viewsets.ModelViewSet):
     queryset = Grade.objects.all()
@@ -627,6 +1139,292 @@ class GradeViewSet(viewsets.ModelViewSet):
 
         return Response({"courseId": int(course_id), "students": results})
 
+    # What it does: grades close to maxMark using F() (compare two columns in SQL).
+    # Path: GET /api/grades/near-max/?ratio=0.8
+    # SQL: WHERE mark >= maxMark * 0.8
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="near-max",
+        url_name="near-max",
+    )
+    def near_max(self, request):
+        """Grades where mark >= maxMark * ratio (F() compares columns in the DB)."""
+        ratio_raw = request.query_params.get("ratio", "0.8")
+        try:
+            ratio = Decimal(str(ratio_raw))
+        except (InvalidOperation, TypeError, ValueError):
+            return Response(
+                {"detail": "Query param 'ratio' must be a number (e.g. 0.8)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if ratio <= 0 or ratio > 1:
+            return Response(
+                {"detail": "Query param 'ratio' must be in (0, 1]."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # F('maxMark') = use the row's own maxMark column (not a Python variable)
+        qs = (
+            self.get_queryset()
+            .filter(mark__gte=F("maxMark") * ratio)
+            .select_related("student", "course")
+            .order_by("-mark")
+        )
+        return Response(self.get_serializer(qs, many=True).data)
+
+    # What it does: global grade statistics (Min / Max / Avg / Count).
+    # Path: GET /api/grades/statistics/
+    # Optional: ?course_id=1
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="statistics",
+        url_name="statistics",
+    )
+    def statistics(self, request):
+        """Aggregate grade statistics; optional filter by course_id."""
+        qs = self.get_queryset()
+        course_id = request.query_params.get("course_id")
+        if course_id is not None:
+            qs = qs.filter(course_id=course_id)
+
+        # aggregate() → ONE dict (not a QuerySet of rows)
+        stats = qs.aggregate(
+            gradeCount=Count("mark"),
+            averageMark=Avg("mark"),
+            minMark=Min("mark"),
+            maxMark=Max("mark"),
+            totalCoefficient=Sum("coefficient"),
+        )
+
+        def _fmt(value):
+            if value is None:
+                return None
+            return str(
+                Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            )
+
+        payload = {
+            "courseId": int(course_id) if course_id is not None else None,
+            "gradeCount": stats["gradeCount"] or 0,
+            "averageMark": _fmt(stats["averageMark"]),
+            "minMark": _fmt(stats["minMark"]),
+            "maxMark": _fmt(stats["maxMark"]),
+            "totalCoefficient": (
+                float(stats["totalCoefficient"])
+                if stats["totalCoefficient"] is not None
+                else 0.0
+            ),
+        }
+        # Example output look like:
+        # {
+        #   "courseId": 1,
+        #   "gradeCount": 42,
+        #   "averageMark": "12.35",
+        #   "minMark": "5.00",
+        #   "maxMark": "19.50",
+        #   "totalCoefficient": 48.0
+        # }
+        return Response(payload)
+
+    # What it does: insert many Grade rows in one SQL statement (bulk_create).
+    # Path: POST /api/grades/bulk-create/
+    # Body JSON:
+    # {
+    #   "grades": [
+    #     {"student": 20260001, "course": 1, "gradeName": "exam", "mark": "14.50",
+    #      "coefficient": 2.0},
+    #     {"student": 20260002, "course": 1, "gradeName": "quiz", "mark": "12.00"}
+    #   ]
+    # }
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk-create",
+        url_name="bulk-create",
+    )
+    def bulk_create_grades(self, request):
+        """Create many grades with bulk_create (one INSERT … multi-VALUES)."""
+        items = request.data.get("grades")
+        if not isinstance(items, list) or not items:
+            return Response(
+                {"detail": "Body must include a non-empty 'grades' list."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        valid_names = set(GradeName.values)
+        to_create = []
+        errors = []
+        for index, item in enumerate(items):
+            student_id = item.get("student")
+            course_id = item.get("course")
+            grade_name = item.get("gradeName")
+            mark = item.get("mark")
+            if (
+                student_id is None
+                or course_id is None
+                or not grade_name
+                or mark is None
+            ):
+                errors.append(
+                    {
+                        "index": index,
+                        "detail": "student, course, gradeName and mark are required.",
+                    }
+                )
+                continue
+            if grade_name not in valid_names:
+                errors.append(
+                    {
+                        "index": index,
+                        "detail": f"Invalid gradeName. Choose one of: {sorted(valid_names)}",
+                    }
+                )
+                continue
+            try:
+                mark_dec = Decimal(str(mark))
+                max_mark_dec = Decimal(str(item.get("maxMark", "20")))
+            except (InvalidOperation, TypeError, ValueError):
+                errors.append(
+                    {"index": index, "detail": "mark/maxMark must be numbers."}
+                )
+                continue
+            to_create.append(
+                Grade(
+                    student_id=student_id,
+                    course_id=course_id,
+                    gradeName=grade_name,
+                    mark=mark_dec,
+                    maxMark=max_mark_dec,
+                    coefficient=float(item.get("coefficient", 1.0)),
+                    justification=item.get("justification", ""),
+                )
+            )
+
+        # ignore_conflicts=True → skip rows that violate unique_together (no crash)
+        created = Grade.objects.bulk_create(to_create, ignore_conflicts=True)
+        # Example output look like:
+        # {
+        #   "requested": 2,
+        #   "createdCount": 2,
+        #   "errors": []
+        # }
+        return Response(
+            {
+                "requested": len(items),
+                "createdCount": len(created),
+                "errors": errors,
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+    # What it does: update many existing grades in few queries (bulk_update).
+    # Path: POST /api/grades/bulk-update/
+    # Body JSON:
+    # {
+    #   "updates": [
+    #     {"student": 20260001, "course": 1, "gradeName": "exam",
+    #      "mark": "15.00", "coefficient": 2.0},
+    #     {"student": 20260002, "course": 1, "gradeName": "quiz", "mark": "11.50"}
+    #   ]
+    # }
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk-update",
+        url_name="bulk-update",
+    )
+    def bulk_update_grades(self, request):
+        """Update many grades with bulk_update (batched UPDATE, not N save())."""
+        items = request.data.get("updates")
+        if not isinstance(items, list) or not items:
+            return Response(
+                {"detail": "Body must include a non-empty 'updates' list."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Build lookup keys first, then ONE query (avoid N× Grade.objects.get)
+        parsed: list[tuple[int, dict, tuple]] = []
+        errors = []
+        for index, item in enumerate(items):
+            student_id = item.get("student")
+            course_id = item.get("course")
+            grade_name = item.get("gradeName")
+            if student_id is None or course_id is None or not grade_name:
+                errors.append(
+                    {
+                        "index": index,
+                        "detail": "student, course and gradeName are required.",
+                    }
+                )
+                continue
+            key = (student_id, course_id, grade_name)
+            parsed.append((index, item, key))
+
+        existing: dict[tuple, Grade] = {}
+        if parsed:
+            q = Q()
+            for _index, _item, key in parsed:
+                student_id, course_id, grade_name = key
+                q |= Q(
+                    student_id=student_id,
+                    course_id=course_id,
+                    gradeName=grade_name,
+                )
+            for grade in Grade.objects.filter(q):
+                existing[(grade.student_id, grade.course_id, grade.gradeName)] = grade
+
+        to_update = []
+        fields_touched: set[str] = set()
+        for index, item, key in parsed:
+            grade = existing.get(key)
+            if grade is None:
+                errors.append({"index": index, "detail": "grade not found"})
+                continue
+
+            if "mark" in item:
+                try:
+                    grade.mark = Decimal(str(item["mark"]))
+                    fields_touched.add("mark")
+                except (InvalidOperation, TypeError, ValueError):
+                    errors.append({"index": index, "detail": "mark must be a number."})
+                    continue
+            if "coefficient" in item:
+                try:
+                    grade.coefficient = float(item["coefficient"])
+                    fields_touched.add("coefficient")
+                except (TypeError, ValueError):
+                    errors.append(
+                        {"index": index, "detail": "coefficient must be a number."}
+                    )
+                    continue
+            if "justification" in item:
+                grade.justification = item["justification"]
+                fields_touched.add("justification")
+            to_update.append(grade)
+
+        updated_count = 0
+        if to_update and fields_touched:
+            # bulk_update(objs, fields) → UPDATE only listed columns, in batches
+            Grade.objects.bulk_update(to_update, list(fields_touched))
+            updated_count = len(to_update)
+
+        # Example output look like:
+        # {
+        #   "requested": 2,
+        #   "updatedCount": 2,
+        #   "fields": ["mark", "coefficient"],
+        #   "errors": []
+        # }
+        return Response(
+            {
+                "requested": len(items),
+                "updatedCount": updated_count,
+                "fields": sorted(fields_touched),
+                "errors": errors,
+            }
+        )
+
 
 class ProfileViewSet(viewsets.ModelViewSet):
     queryset = Profile.objects.all()
@@ -711,7 +1509,7 @@ class InscriptionViewSet(viewsets.ModelViewSet):
         student_id = request.data.get("student")
         course_id = request.data.get("course")
         situation = request.data.get("situation")
-        valid = {choice.value for choice in InscriptionStatus}
+        valid = set(InscriptionStatus.values)
 
         if student_id is None or course_id is None or not situation:
             return Response(
